@@ -2227,7 +2227,7 @@ var Anim = {
 var Sound = (function () {
   // Quiet, physical sounds: wood and stone taps made from short filtered noise, varied a little on every hit
   // so repeated moves never sound identical. No beeps, chimes or fanfares.
-  var ctx = null, noise = null, on = store('sound') !== 'off', master = null;
+  var ctx = null, noise = null, on = store('sound') !== 'off', master = null, ducked = false;
   function init() {
     if (!ctx) {
       try {
@@ -2245,7 +2245,7 @@ var Sound = (function () {
   function vary(x, amt) { return x * (1 + (Math.random() * 2 - 1) * amt); }
   // one tap: a bandpassed click plus a short, fixed-pitch body resonance (the "wood")
   function tap(freq, vol, dur, delay, body) {
-    if (!on || !ctx) return;
+    if (!on || ducked || !ctx) return;
     var t = ctx.currentTime + (delay || 0) + Math.random() * 0.006; freq = vary(freq, 0.08); vol = vary(vol, 0.15);
     var src = ctx.createBufferSource(); src.buffer = noise; src.playbackRate.value = vary(1, 0.1);
     var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.4;
@@ -2268,6 +2268,7 @@ var Sound = (function () {
   return {
     get on() { return on; },
     toggle: function () { on = !on; store('sound', on ? 'on' : 'off'); init(); return on; },
+    duck: function (d) { ducked = !!d; if (master && ctx) master.gain.setTargetAtTime(ducked ? 0 : 0.32, ctx.currentTime, 0.02); },
     move: function (d) { tap(900, 0.35, 0.07, d, 210); },
     capture: function (d) { tap(780, 0.42, 0.08, d, 180); tap(1100, 0.22, 0.06, (d || 0) + 0.06, 240); },
     check: function () { tap(1000, 0.25, 0.06, 0, 230); tap(1000, 0.2, 0.06, 0.11, 230); },
@@ -2367,7 +2368,49 @@ var Music = (function () {
   return {
     get on() { return on; },
     toggle: function () { on = !on; store('music', on ? 'on' : 'off'); if (on) start(); else stop(); return on; },
-    mood: function (i) { mood = ((i % MOODS.length) + MOODS.length) % MOODS.length; }
+    mood: function (i) { mood = ((i % MOODS.length) + MOODS.length) % MOODS.length; },
+    duck: function (d) { if (!ctx || !out) return; out.gain.cancelScheduledValues(ctx.currentTime); out.gain.setTargetAtTime(d || !on ? 0.0001 : 0.55, ctx.currentTime, 0.05); }
+  };
+})();
+
+// ---------- Portal (CrazyGames, Playgama, ... via Playgama Bridge) ----------
+// Only active in portal builds. Tells the host page when the game is ready and when play starts/stops,
+// mutes on request, and shows an interstitial ad only between finished games (never during play or at start).
+var Portal = (function () {
+  var active = !!window.BOARDRIFT_PORTAL, B = null, readySent = false, playing = false, finishedSinceAd = false, muteReasons = {};
+  function sendReady() { if (!readySent) { readySent = true; send('game_ready'); } }
+  function send(msg) { if (B) { try { B.platform.sendMessage(msg); } catch (e) {} } }
+  function mute(reason, on) { if (on) muteReasons[reason] = 1; else delete muteReasons[reason]; var m = Object.keys(muteReasons).length > 0; Sound.duck(m); Music.duck(m); }
+  var initP = !active || !window.bridge ? Promise.resolve() : window.bridge.initialize().then(function () {
+    B = window.bridge;
+    try {
+      B.platform.on(B.EVENT_NAME.AUDIO_STATE_CHANGED, function (enabled) { mute('platform', !enabled); });
+      B.platform.on(B.EVENT_NAME.PAUSE_STATE_CHANGED, function (paused) { mute('pause', paused); });
+      B.advertisement.on(B.EVENT_NAME.INTERSTITIAL_STATE_CHANGED, function (st) { mute('ad', st === 'opened' || st === 'loading'); });
+      if (B.advertisement.interstitialState === 'opened') mute('ad', true);
+    } catch (e) {}
+  }).catch(function () { B = null; });
+  return {
+    active: active,
+    whenReady: function (fn) { initP.then(fn, fn); },
+    ready: function () { initP.then(sendReady); },
+    start: function () { if (playing) return; playing = true; initP.then(function () { sendReady(); send('gameplay_started'); }); },
+    stop: function () { if (!playing) return; playing = false; initP.then(function () { send('gameplay_stopped'); }); },
+    gameOver: function () { this.stop(); finishedSinceAd = true; },
+    // run cb after an interstitial (if one is due), otherwise straight away
+    beforeNewGame: function (cb) {
+      if (!B || !finishedSinceAd || !B.advertisement.isInterstitialSupported) { cb(); return; }
+      finishedSinceAd = false;
+      var done = false, off = null;
+      function go() { if (done) return; done = true; mute('ad', false); cb(); }
+      try {
+        off = function (st) { if (st === 'closed' || st === 'failed') { try { B.advertisement.off(B.EVENT_NAME.INTERSTITIAL_STATE_CHANGED, off); } catch (e) {} go(); } };
+        B.advertisement.on(B.EVENT_NAME.INTERSTITIAL_STATE_CHANGED, off);
+        B.advertisement.showInterstitial('between_games');
+      } catch (e) { go(); return; }
+      // if the platform skips the ad (e.g. minimum delay not reached) no state change arrives
+      setTimeout(function () { var st = B.advertisement.interstitialState; if (st !== 'opened' && st !== 'loading') go(); }, 900);
+    }
   };
 })();
 
@@ -2566,6 +2609,7 @@ function Match(G, root) {
     if (m.net && m.net.host) broadcast({ t: 'start' });
     var aiSeat = m.seats.findIndex(function (s) { return s.kind === 'ai'; });
     if (aiSeat >= 0 && m.mySeats().length && Taunts.enabled && Math.random() < 0.25) setTimeout(function () { m.say(aiSeat, Taunts.pick('start')); }, 700);
+    Portal.start();
     m.step();
   };
   m.say = function (seat, text) { var si = m.info()[seat]; L.bubble(m.seatName(seat), text, si.chip); };
@@ -2636,13 +2680,13 @@ function Match(G, root) {
     else if (m.isMine(w)) { win = true; title = humansLocal > 1 ? m.seatName(w) + ' wins!' : (r.youTitle || 'You win!'); }
     else if (!mine.length) { win = null; title = m.seatName(w) + ' wins'; }
     else { win = false; title = m.seatName(w) + ' wins'; }
-    L.status(title, 'over');
+    L.status(title, 'over'); Portal.gameOver();
     if (Taunts.enabled && mine.length) {
       var aiW = w >= 0 && m.seats[w].kind === 'ai', aiAny = m.seats.findIndex(function (s) { return s.kind === 'ai'; });
       if (aiW) setTimeout(function () { m.say(w, Taunts.pick('win')); }, 300);
       else if (win && aiAny >= 0) setTimeout(function () { m.say(aiAny, Taunts.pick('lose')); }, 300);
     }
-    L.result(win, title, r.sub || '', m.isAuthority() ? function () { m.newGame(); } : null);
+    L.result(win, title, r.sub || '', m.isAuthority() ? function () { Portal.beforeNewGame(function () { m.newGame(); }); } : null);
   }
   m.undo = function () {
     if (m.net || !m.hist.length) return;
@@ -2669,7 +2713,7 @@ function Match(G, root) {
       G.counts.forEach(function (n) { var b = H('button', { class: n === m.n ? 'on' : '' }, sg, n + ' players'); b.onclick = function () { if (m.n === n) return; m.n = n; m.kinds = []; buildSeats(); saveCfg(); setupUI(); m.newGame(); }; });
     }
     seatsEditor(box, false);
-    var on = H('button', { class: 'btn online' }, box, 'Play online with friends'); on.onclick = onlineDialog;
+    if (!Portal.active) { var on = H('button', { class: 'btn online' }, box, 'Play online with friends'); on.onclick = onlineDialog; }
   }
   function seatsEditor(box, net) {
     var info = m.info(), list = H('div', { class: 'seats' }, box);
@@ -2810,7 +2854,7 @@ function Match(G, root) {
     t.onclick = function () { menu.style.display = menu.style.display === 'none' ? '' : 'none'; };
   })();
   // buttons
-  L.button('New game', function () { m.newGame(); }, true);
+  L.button('New game', function () { Portal.beforeNewGame(function () { m.newGame(); }); }, true);
   L.button('Undo', function () { m.undo(); });
   G.mount(L, m);
   setupUI();
@@ -3666,7 +3710,7 @@ var BackgammonG = (function () {
 })();
 
 // ===================== App shell =====================
-var GAMES = [
+var ALL_GAMES = [
   { id: 'chess', name: 'Chess', icon: '♚︎', G: ChessG },
   { id: 'checkers', name: 'Checkers', icon: '⛂︎', G: CheckersG },
   { id: 'go', name: 'Go', icon: '◐', G: GoG },
@@ -3674,6 +3718,8 @@ var GAMES = [
   { id: 'chinese', name: 'Chinese Checkers', icon: '✡︎', G: ChineseG },
   { id: 'backgammon', name: 'Backgammon', icon: '⚅︎', G: BackgammonG }
 ];
+var GAMES = Portal.active ? ALL_GAMES.filter(function (g) { return g.id === window.BOARDRIFT_GAME; }) : ALL_GAMES;
+if (!GAMES.length) GAMES = ALL_GAMES.slice(0, 1);
 var nav = document.getElementById('tabs'), mainEl = document.getElementById('main'), matches = {}, panes = {};
 GAMES.forEach(function (g, i) {
   var b = H('button', null, nav, g.name); g.btn = b;
@@ -3684,7 +3730,7 @@ function show(id) {
   GAMES.forEach(function (g, i) { g.btn.className = g.id === id ? 'on' : ''; panes[g.id].className = 'game' + (g.id === id ? ' on' : ''); if (g.id === id) Music.mood(i); });
   var g = GAMES.filter(function (x) { return x.id === id; })[0];
   if (!matches[id]) { matches[id] = new Match(g.G, panes[id]); matches[id].newGame(); }
-  if (location.hash !== '#' + id) { try { history.replaceState(null, '', location.pathname + location.search + '#' + id); } catch (e) { } }
+  if (!Portal.active && location.hash !== '#' + id) { try { history.replaceState(null, '', location.pathname + location.search + '#' + id); } catch (e) { } }
   store('tab', id);
   return matches[id];
 }
@@ -3702,12 +3748,13 @@ tbtn.onclick = function () { Taunts.enabled = !Taunts.enabled; labels(); };
 labels();
 var start = (location.hash || '').slice(1);
 if (!GAMES.some(function (g) { return g.id === start; })) start = store('tab') || 'chess';
-if (!GAMES.some(function (g) { return g.id === start; })) start = 'chess';
+if (!GAMES.some(function (g) { return g.id === start; })) start = GAMES[0].id;
 var first = show(start);
+Portal.ready();
 window.addEventListener('hashchange', function () { var h = location.hash.slice(1); if (GAMES.some(function (g) { return g.id === h; })) { show(h); try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); } } });
 // invite links: ?room=CODE#game
 (function () {
-  var m = /[?&]room=([A-Za-z0-9]{4,8})/.exec(location.search); if (!m || !Net.available()) return;
+  var m = /[?&]room=([A-Za-z0-9]{4,8})/.exec(location.search); if (Portal.active || !m || !Net.available()) return;
   var code = m[1].toUpperCase(), match = first;
   match.L.overlay('Join room ' + code, function (box, close) {
     H('p', null, box, 'You were invited to play ' + match.G.layout.title + '.');
