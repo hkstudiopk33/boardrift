@@ -10,8 +10,10 @@ export default {
     const m = url.pathname.match(/^\/room\/([A-Za-z0-9]{4,8})$/);
     if (!m) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Boardrift game server is running.', { headers: { 'content-type': 'text/plain' } });
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket connection', { status: 426 });
-    const stub = env.ROOMS.get(env.ROOMS.idFromName(m[1].toUpperCase()));
-    return stub.fetch(request);
+    try {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(m[1].toUpperCase()));
+      return await stub.fetch(request);
+    } catch (e) { console.error('room fetch failed', m[1], e && e.stack || String(e)); throw e; }
   }
 };
 
@@ -38,7 +40,7 @@ export class Room extends DurableObject {
     this.peers();
     if (!wantHost) { if (this.last.lobby) server.send(this.last.lobby); if (this.last.state) server.send(this.last.state); }
     return new Response(null, { status: 101, webSocket: client });
-    } catch (e) { return reject('Server error: ' + (e && e.message || e)); }
+    } catch (e) { console.error('room accept failed', e && e.stack || String(e)); return reject('Server error: ' + (e && e.message || e)); }
   }
   webSocketMessage(ws, raw) {
     if (typeof raw !== 'string' || raw.length > 200000) return;
