@@ -26,6 +26,7 @@ export class Room extends DurableObject {
     const wantHost = url.searchParams.get('host') === '1';
     const pair = new WebSocketPair(); const [client, server] = Object.values(pair);
     const reject = (msg) => { server.accept(); server.send(JSON.stringify({ type: 'error', msg })); server.close(1008, 'rejected'); return new Response(null, { status: 101, webSocket: client }); };
+    try {
     const host = this.hostCid();
     if (wantHost && host && host !== cid) return reject('That room code is already in use — please try again.');
     if (!wantHost && !host) return reject('Room not found. Check the code with your friend.');
@@ -37,6 +38,7 @@ export class Room extends DurableObject {
     this.peers();
     if (!wantHost) { if (this.last.lobby) server.send(this.last.lobby); if (this.last.state) server.send(this.last.state); }
     return new Response(null, { status: 101, webSocket: client });
+    } catch (e) { return reject('Server error: ' + (e && e.message || e)); }
   }
   webSocketMessage(ws, raw) {
     if (typeof raw !== 'string' || raw.length > 200000) return;
