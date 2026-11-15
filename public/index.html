@@ -92,7 +92,7 @@ main{max-width:1240px;margin:0 auto;padding:22px 24px 48px}
 .chip.red{background:radial-gradient(circle at 35% 30%,#ff8a7a,#8f1f18)}.chip.blue{background:radial-gradient(circle at 35% 30%,#bfe0ff,#1d4a8c)}
 .chip.gold{background:radial-gradient(circle at 35% 30%,#fff1b0,#a8762a)}.chip.wood{background:radial-gradient(circle at 35% 30%,#a06a44,#3a2014)}
 .ptag{font-size:11.5px;font-weight:600;color:var(--ink-muted);white-space:nowrap}
-.ptag.ai{display:none}
+.ptag.ai,.ptag.computer{display:none}
 .ptag.online{color:var(--chalk)}.ptag.you{color:var(--win)}
 
 /* turn line */
@@ -244,7 +244,7 @@ svg text{font-family:var(--sans)}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style></head>
 <body>
-<header><h1 class="mark"><svg viewBox="0 0 30 30" aria-hidden="true"><rect x="1" y="1" width="28" height="28" rx="3" fill="none" stroke="#e7ece4" stroke-width="2"/><rect x="5" y="5" width="10" height="10" fill="#e7ece4"/><rect x="15" y="15" width="10" height="10" fill="#e7ece4"/><circle cx="20" cy="10" r="4" fill="#5b9be0"/></svg>Boardrift<span class="sr"> — free chess, checkers, Go and more against AI or friends</span></h1><nav class="tabs" id="tabs" aria-label="Choose a game"></nav><div class="hdr-right"><button class="iconbtn" id="musicBtn" aria-label="Music" title="Music"></button><button class="iconbtn" id="tauntBtn" aria-label="AI taunts" title="AI taunts"></button><button class="iconbtn" id="soundBtn" aria-label="Sound effects" title="Sound effects"></button></div></header>
+<header><h1 class="mark"><svg viewBox="0 0 30 30" aria-hidden="true"><rect x="1" y="1" width="28" height="28" rx="3" fill="none" stroke="#e7ece4" stroke-width="2"/><rect x="5" y="5" width="10" height="10" fill="#e7ece4"/><rect x="15" y="15" width="10" height="10" fill="#e7ece4"/><circle cx="20" cy="10" r="4" fill="#5b9be0"/></svg>Boardrift<span class="sr"> — free chess, checkers, Go and more against AI or friends</span></h1><nav class="tabs" id="tabs" aria-label="Choose a game"></nav><div class="hdr-right"><button class="iconbtn" id="musicBtn" aria-label="Music" title="Music"></button><button class="iconbtn" id="tauntBtn" aria-label="Taunts" title="Taunts"></button><button class="iconbtn" id="soundBtn" aria-label="Sound effects" title="Sound effects"></button></div></header>
 <main id="main"></main>
 <section class="seo" id="about" aria-labelledby="about-h">
   <div class="seo-inner">
@@ -2225,52 +2225,61 @@ var Anim = {
 };
 
 var Sound = (function () {
+  // Quiet, physical sounds: wood and stone taps made from short filtered noise, varied a little on every hit
+  // so repeated moves never sound identical. No beeps, chimes or fanfares.
   var ctx = null, noise = null, on = store('sound') !== 'off', master = null;
   function init() {
     if (!ctx) {
       try {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
-        master = ctx.createGain(); master.gain.value = 0.9; master.connect(ctx.destination);
-        var len = ctx.sampleRate * 0.4; noise = ctx.createBuffer(1, len, ctx.sampleRate); var d = noise.getChannelData(0);
-        for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+        var comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.ratio.value = 4; comp.connect(ctx.destination);
+        master = ctx.createGain(); master.gain.value = 0.32; master.connect(comp);
+        var len = Math.floor(ctx.sampleRate * 0.25); noise = ctx.createBuffer(1, len, ctx.sampleRate); var d = noise.getChannelData(0);
+        for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
       } catch (e) { ctx = null; }
     }
     if (ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
   }
   window.addEventListener('pointerdown', init, true);
   window.addEventListener('keydown', init, true);
-  function knock(freq, vol, dur, delay, q) {
+  function vary(x, amt) { return x * (1 + (Math.random() * 2 - 1) * amt); }
+  // one tap: a bandpassed click plus a short, fixed-pitch body resonance (the "wood")
+  function tap(freq, vol, dur, delay, body) {
     if (!on || !ctx) return;
-    var t = ctx.currentTime + (delay || 0);
-    var src = ctx.createBufferSource(); src.buffer = noise;
-    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = q || 3;
-    var g = ctx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-    src.connect(bp); bp.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.03);
-    var o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(freq / 5, t); o.frequency.exponentialRampToValueAtTime(freq / 9, t + dur);
-    var g2 = ctx.createGain(); g2.gain.setValueAtTime(vol * 0.9, t); g2.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-    o.connect(g2); g2.connect(master); o.start(t); o.stop(t + dur + 0.03);
+    var t = ctx.currentTime + (delay || 0) + Math.random() * 0.006; freq = vary(freq, 0.08); vol = vary(vol, 0.15);
+    var src = ctx.createBufferSource(); src.buffer = noise; src.playbackRate.value = vary(1, 0.1);
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.4;
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = freq * 2.2;
+    var g = ctx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0005, t + dur);
+    src.connect(bp); bp.connect(lp); lp.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.02);
+    if (body) {
+      var o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = vary(body, 0.04);
+      var g2 = ctx.createGain(); g2.gain.setValueAtTime(vol * 0.35, t); g2.gain.exponentialRampToValueAtTime(0.0005, t + dur * 0.8);
+      o.connect(g2); g2.connect(master); o.start(t); o.stop(t + dur);
+    }
   }
-  function tone(f, dur, delay, type, vol) {
+  function bell(f, vol, delay) {
     if (!on || !ctx) return;
-    var t = ctx.currentTime + (delay || 0), o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type || 'sine'; o.frequency.setValueAtTime(f, t);
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol || 0.12, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.05);
+    var t = ctx.currentTime + (delay || 0), o = ctx.createOscillator(), g = ctx.createGain(), lp = ctx.createBiquadFilter();
+    o.type = 'sine'; o.frequency.value = f; lp.type = 'lowpass'; lp.frequency.value = 1800;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0005, t + 1.4);
+    o.connect(lp); lp.connect(g); g.connect(master); o.start(t); o.stop(t + 1.5);
   }
   return {
     get on() { return on; },
     toggle: function () { on = !on; store('sound', on ? 'on' : 'off'); init(); return on; },
-    move: function (d) { knock(1300, 0.55, 0.09, d); },
-    capture: function (d) { knock(950, 0.7, 0.11, d); knock(1700, 0.45, 0.08, (d || 0) + 0.05); },
-    check: function () { tone(880, 0.25, 0.05, 'triangle', 0.13); tone(1318, 0.3, 0.13, 'triangle', 0.09); },
-    stone: function (d) { knock(2900, 0.6, 0.05, d, 6); knock(700, 0.25, 0.06, d); },
-    seed: function (i, d) { tone(1050 + (i % 6) * 70, 0.07, d, 'sine', 0.06); knock(3800, 0.12, 0.03, d, 8); },
-    marble: function (d) { tone(2200, 0.06, d, 'sine', 0.05); knock(3200, 0.25, 0.04, d, 9); },
-    dice: function () { for (var i = 0; i < 7; i++) knock(1800 + Math.random() * 1600, 0.22 + Math.random() * 0.2, 0.035, i * 0.055 + Math.random() * 0.02, 7); },
-    crown: function () { [784, 988, 1175].forEach(function (f, i) { tone(f, 0.22, i * 0.07, 'triangle', 0.1); }); },
-    win: function () { [523, 659, 784, 1047, 1319].forEach(function (f, i) { tone(f, 0.45, i * 0.11, 'triangle', 0.13); }); },
-    lose: function () { [392, 330, 262].forEach(function (f, i) { tone(f, 0.5, i * 0.16, 'sine', 0.1); }); },
-    tick: function () { tone(1500, 0.04, 0, 'sine', 0.04); }
+    move: function (d) { tap(900, 0.35, 0.07, d, 210); },
+    capture: function (d) { tap(780, 0.42, 0.08, d, 180); tap(1100, 0.22, 0.06, (d || 0) + 0.06, 240); },
+    check: function () { tap(1000, 0.25, 0.06, 0, 230); tap(1000, 0.2, 0.06, 0.11, 230); },
+    stone: function (d) { tap(2600, 0.38, 0.045, d); tap(600, 0.12, 0.05, d, 320); },
+    seed: function (i, d) { tap(2400, 0.08, 0.03, d); },
+    marble: function (d) { tap(2800, 0.18, 0.04, d); tap(1900, 0.08, 0.05, (d || 0) + 0.03); },
+    dice: function () { for (var i = 0; i < 6; i++) tap(1400 + Math.random() * 900, 0.12 + Math.random() * 0.08, 0.03, i * 0.06 + Math.random() * 0.025); },
+    crown: function () { tap(700, 0.3, 0.09, 0, 170); tap(700, 0.3, 0.09, 0.09, 170); },
+    win: function () { bell(523.25, 0.07, 0); bell(783.99, 0.05, 0.12); },
+    lose: function () {},
+    tick: function () { tap(1800, 0.06, 0.025, 0); },
+    ui: function () {}
   };
 })();
 
@@ -2364,16 +2373,17 @@ var Music = (function () {
 
 // ---------- Taunts (original, family-friendly lines) ----------
 var Taunts = {
+  // Short, dry lines a person across the table might say. No emoji, nothing about "calculating".
   ai: {
-    start: ['Ready when you are. I\'ve been practising.', 'Let\'s see what you\'ve got!', 'Good luck. You\'ll need it. 😉', 'I calculated 3 million moves while you blinked.'],
-    capture: ['Yoink! That one\'s mine.', 'Thanks for the gift! 🎁', 'Did you need that piece?', 'Snack time. 😋', 'Oops — was that important?'],
-    lost: ['Lucky shot.', 'Hmm. I allowed that. On purpose. Probably.', 'Okay, okay, nice one.', 'Fine. I\'m warming up.'],
-    ahead: ['This is going well… for me.', 'Feeling the pressure yet?', 'Don\'t worry, it\'s only a game. 😏'],
-    win: ['GG! Rematch? I promise to go easy. (I won\'t.)', 'Victory tastes like electricity. ⚡', 'Better luck next time!'],
-    lose: ['Well played. You earned that one. 👏', 'Impressive! I\'ll remember this.', 'Rematch. Right now.'],
-    pass: ['Taking a breather?', 'Your move. Take your time. Or don\'t.']
+    start: ['Your move.', 'Go on, then.', 'Same rules as last time.', 'I\'ll try to keep it close.'],
+    capture: ['Thank you.', 'I\'ll take that.', 'You left that one hanging.', 'That\'s mine now.'],
+    lost: ['Fair enough.', 'Didn\'t see that.', 'Okay, good move.', 'Hm.'],
+    ahead: ['Still your move.', 'Take your time.', 'No rush.'],
+    win: ['Good game. Another?', 'That one was mine. Rematch?', 'Close, for a while.'],
+    lose: ['Well played.', 'You earned that.', 'Again. Right now.'],
+    pass: ['Passing? All right.', 'Your call.']
   },
-  quick: ['Your move… if you dare 😏', 'Nice try!', 'Is that all? 😴', 'Gotcha! 😈', 'Oops 😬', 'Well played 👏', 'GG 🤝', 'Thinking hard? 🤔', 'Too easy!', 'Watch this… 👀'],
+  quick: ['Your move', 'Nice one', 'Oops', 'Not bad', 'Well played', 'Good game', 'Hurry up', 'Watch this', 'Lucky', 'Rematch?'],
   pick: function (cat) { var a = this.ai[cat]; return a[(Math.random() * a.length) | 0]; },
   get enabled() { return store('taunts') !== 'off'; },
   set enabled(v) { store('taunts', v ? 'on' : 'off'); }
@@ -2421,7 +2431,7 @@ function makeLayout(root, cfg) {
   var tauntBar = H('div', { class: 'tauntbar' }, side);
   var extra = H('div', { class: 'extra' }, side);
   var setup = H('div', { class: 'setup' }, side);
-  var lvRow = H('div', null, side); H('label', { class: 'lbl' }, lvRow, 'AI strength');
+  var lvRow = H('div', null, side); H('label', { class: 'lbl' }, lvRow, 'Computer level');
   var seg = H('div', { class: 'seg' }, lvRow), level = store(cfg.id + '.level') || 'hard', segBtns = [];
   LEVELS.forEach(function (l) { var b = H('button', { class: l[0] === level ? 'on' : '' }, seg, l[1]); segBtns.push(b); b.onclick = function () { level = l[0]; store(cfg.id + '.level', level); segBtns.forEach(function (x) { x.className = x === b ? 'on' : ''; }); }; });
   var btns = H('div', { class: 'row' }, side);
@@ -2456,7 +2466,7 @@ function makeLayout(root, cfg) {
     button: function (label, fn, primary, parent) { var b = H('button', { class: 'btn' + (primary ? ' primary' : '') }, parent || btns, label); b.onclick = fn; return b; },
     overlay: function (title, buildBody, cls) { var ov = H('div', { class: 'overlay ' + (cls || '') }, wrap); var box = H('div', { class: 'box' }, ov); if (title) H('h3', null, box, title); var close = function () { if (ov.parentNode) ov.parentNode.removeChild(ov); }; buildBody(box, close); return { el: ov, close: close }; },
     result: function (win, title, sub, again) {
-      if (win === true) { Sound.win(); Confetti(); } else if (win === false) Sound.lose(); else Sound.tick();
+      if (win === true) { Sound.win(); Confetti(); } else if (win === false) Sound.lose();
       setTimeout(function () {
         api.overlay(null, function (box, close) {
           H('div', { class: 'medal ' + (win === true ? 'w' : win === false ? 'l' : 'd') }, box, win === true ? '♕︎' : win === false ? '♟︎' : '⚖︎');
@@ -2529,7 +2539,7 @@ function Match(G, root) {
   m.isAuthority = function () { return !m.net || m.net.host; };
   m.seatName = function (i) {
     var si = m.info()[i], s = m.seats[i];
-    if (s.kind === 'ai') return si.name + ' (AI)';
+    if (s.kind === 'ai') return si.name + ' (computer)';
     if (m.net) { if (s.owner === 'local') return m.net.host ? (Net.me.name || 'Host') : (s.name || 'Host'); if (s.owner === Net.me.cid) return Net.me.name || 'You'; return s.name || 'Open seat'; }
     var humans = m.seats.filter(function (x) { return x.kind === 'human'; }).length;
     return humans === 1 ? 'You' : si.name;
@@ -2538,7 +2548,7 @@ function Match(G, root) {
   m.canAct = function (seat) { return !m.busy && !m.over && seat >= 0 && G.turn(m.state) === seat && m.isMine(seat) && (!m.net || m.netLive); };
   function playersUI() {
     var info = m.info();
-    L.setPlayers(info.map(function (si, i) { var s = m.seats[i]; return { name: m.seatName(i), chip: si.chip, tag: s.kind === 'ai' ? 'AI' : (m.net && !m.isMine(i) ? 'Online' : (m.isMine(i) && m.mySeats().length < m.seats.filter(function (x) { return x.kind === 'human'; }).length ? 'You' : '')), out: G.isOut ? G.isOut(m.state, i) : false }; }));
+    L.setPlayers(info.map(function (si, i) { var s = m.seats[i]; return { name: m.seatName(i), chip: si.chip, tag: s.kind === 'ai' ? 'Computer' : (m.net && !m.isMine(i) ? 'Online' : (m.isMine(i) && m.mySeats().length < m.seats.filter(function (x) { return x.kind === 'human'; }).length ? 'You' : '')), out: G.isOut ? G.isOut(m.state, i) : false }; }));
   }
   m.playersUI = playersUI;
   function refreshSide() {
@@ -2555,7 +2565,7 @@ function Match(G, root) {
     playersUI(); G.render(m, { t: 'start' }); refreshSide();
     if (m.net && m.net.host) broadcast({ t: 'start' });
     var aiSeat = m.seats.findIndex(function (s) { return s.kind === 'ai'; });
-    if (aiSeat >= 0 && m.mySeats().length && Taunts.enabled && Math.random() < 0.8) setTimeout(function () { m.say(aiSeat, Taunts.pick('start')); }, 700);
+    if (aiSeat >= 0 && m.mySeats().length && Taunts.enabled && Math.random() < 0.25) setTimeout(function () { m.say(aiSeat, Taunts.pick('start')); }, 700);
     m.step();
   };
   m.say = function (seat, text) { var si = m.info()[seat]; L.bubble(m.seatName(seat), text, si.chip); };
@@ -2612,8 +2622,8 @@ function Match(G, root) {
     if (!Taunts.enabled || !fx.ev) return;
     fx.ev.forEach(function (e) {
       if (e.type === 'capture' && e.by >= 0 && e.victim >= 0) {
-        if (m.seats[e.by].kind === 'ai' && m.isMine(e.victim) && Math.random() < 0.45) setTimeout(function () { m.say(e.by, Taunts.pick('capture')); }, 500);
-        else if (m.seats[e.victim].kind === 'ai' && m.isMine(e.by) && Math.random() < 0.35) setTimeout(function () { m.say(e.victim, Taunts.pick('lost')); }, 600);
+        if (m.seats[e.by].kind === 'ai' && m.isMine(e.victim) && Math.random() < 0.18) setTimeout(function () { m.say(e.by, Taunts.pick('capture')); }, 500);
+        else if (m.seats[e.victim].kind === 'ai' && m.isMine(e.by) && Math.random() < 0.15) setTimeout(function () { m.say(e.victim, Taunts.pick('lost')); }, 600);
       }
       if (e.type === 'pass' && m.seats[e.by] && m.isMine(e.by)) { var ai = m.seats.findIndex(function (s) { return s.kind === 'ai'; }); if (ai >= 0 && Math.random() < 0.5) setTimeout(function () { m.say(ai, Taunts.pick('pass')); }, 500); }
     });
@@ -2640,7 +2650,7 @@ function Match(G, root) {
     var s = m.hist.pop();
     while (m.hist.length && !m.isMine(G.turn(s))) s = m.hist.pop();
     if (!m.isMine(G.turn(s))) { m.hist.push(s); return; }
-    m.state = s; G.reset && G.reset(m); Sound.tick(); G.render(m, null); m.step();
+    m.state = s; G.reset && G.reset(m); G.render(m, null); m.step();
   };
   // ----- setup panel -----
   function setupUI() {
@@ -2668,7 +2678,7 @@ function Match(G, root) {
       var ch = H('span', { class: 'chip' }, row); ch.style.background = SEAT_COLORS[si.chip];
       H('span', { class: 'sname' }, row, si.name);
       var sg = H('div', { class: 'seg mini' }, row), s = m.seats[i];
-      var opts = net ? [['local', 'You'], ['ai', 'AI']].concat((m.net.peers || []).filter(function (p) { return !p.host; }).map(function (p) { return ['peer:' + p.cid, p.name || 'Guest']; })).concat([['open', 'Open']]) : [['human', 'Human'], ['ai', 'AI']];
+      var opts = net ? [['local', 'You'], ['ai', 'Computer']].concat((m.net.peers || []).filter(function (p) { return !p.host; }).map(function (p) { return ['peer:' + p.cid, p.name || 'Guest']; })).concat([['open', 'Open']]) : [['human', 'Person'], ['ai', 'Computer']];
       var cur = net ? (s.kind === 'ai' ? 'ai' : s.owner === 'local' ? 'local' : s.owner ? 'peer:' + s.owner : 'open') : s.kind;
       opts.forEach(function (o) {
         var b = H('button', { class: o[0] === cur ? 'on' : '' }, sg, o[1]);
@@ -2788,7 +2798,7 @@ function Match(G, root) {
     var mine = m.mySeats(), seat = G.turn(m.state);
     var who = mine.indexOf(seat) >= 0 ? seat : (mine[0] === undefined ? -1 : mine[0]);
     var name = who >= 0 ? m.seatName(who) : (Net.me.name || 'You');
-    L.bubble(name, text, who >= 0 ? m.info()[who].chip : 'gold'); Sound.tick();
+    L.bubble(name, text, who >= 0 ? m.info()[who].chip : 'gold');
     if (m.net) Net.send('all', { k: 'taunt', name: m.net ? (Net.me.name || name) : name, text: text, seat: who });
     if (!m.net && Taunts.enabled) { var ai = m.seats.findIndex(function (s) { return s.kind === 'ai'; }); if (ai >= 0 && Math.random() < 0.7) setTimeout(function () { m.say(ai, Taunts.pick(Math.random() < 0.5 ? 'ahead' : 'start')); }, 1100); }
   };
@@ -2893,7 +2903,7 @@ var ChessG = (function () {
       if (s.n === 4) return AI.call('chess4', 'think', { state: s.s, seat: seat, noise: lv.noise ? lv.noise * 1.5 : (lv.timeMs < 3000 ? 8 : 0) }, 550).then(function (r) { return r.move; });
       return AI.call('chess', 'think', Object.assign({ fen: E.START, moves: s.moves.slice() }, lv), 500).then(function (r) {
         if (!r || !r.move) return null;
-        var sc = r.score; m.L.info.textContent = (Math.abs(sc) > 29000 ? 'AI sees a forced mate' : 'AI eval ' + ((seat === 0 ? sc : -sc) / 100 > 0 ? '+' : '') + ((seat === 0 ? sc : -sc) / 100).toFixed(2) + ' for ' + m.seatName(seat)) + ', depth ' + r.depth + ', ' + (r.nodes || 0).toLocaleString() + ' positions, ' + fmtTime(r.ms || 0);
+        
         return { u: r.move };
       });
     },
@@ -3071,7 +3081,7 @@ var CheckersG = (function () {
       if (s.n === 4) return AI.call('checkers4', 'think', { state: s.s, seat: seat, noise: lv.noise || 0 }, 550).then(function (r) { return r.move; });
       return AI.call('checkers', 'think', Object.assign({ board: s.b.slice(), side: seat === 0 ? 1 : -1 }, lv), 550).then(function (r) {
         if (!r.move) return null;
-        m.L.info.textContent = 'AI looked ' + (r.depth || 1) + ' moves deep, ' + (r.nodes || 0).toLocaleString() + ' positions, ' + fmtTime(r.ms || 0);
+        
         var ms = E.genMoves(s.b, s.side); return ms.filter(function (x) { return x.from === r.move.from && x.path.join() === r.move.path.join(); })[0] || ms[0];
       });
     },
@@ -3202,7 +3212,7 @@ var GoG = (function () {
         return AI.call('go', 'think', st4(s, lv), 450).then(function (r) {
           if (r.move === GE.PASS || (afterPass && r.winrate < 0.08)) return { t: 'pass' };
           if (r.winrate < 0.03 && s.moves > 30) return { t: 'resign' };
-          m.L.info.textContent = 'AI ran ' + r.sims.toLocaleString() + ' simulations in ' + fmtTime(r.ms) + ', its win chance: ' + Math.round(r.winrate * 100) + '%';
+          
           return { t: 'p', p: r.move };
         });
       };
@@ -3291,7 +3301,7 @@ var WallvaneG = (function () {
       E.apply(s, mv); return fx;
     },
     fxTime: function (fx) { return fx.t === 'wall' ? 540 : 380; },
-    ai: function (s, seat, lv, m) { return AI.call('wallvane', 'think', Object.assign({ state: s, seat: seat }, lv), 550).then(function (r) { if (r.move) m.L.info.textContent = (r.move.t === 'm' ? m.seatName(seat) + ' moved' : m.seatName(seat) + ' placed a wall') + ', ' + (r.nodes || 0).toLocaleString() + ' positions, ' + fmtTime(r.ms || 0); return r.move; }); },
+    ai: function (s, seat, lv, m) { return AI.call('wallvane', 'think', Object.assign({ state: s, seat: seat }, lv), 550).then(function (r) { return r.move; }); },
     scores: function (s) { if (!s) return []; return s.p.map(function (_, i) { return E.seatDist(s, i) + ' steps, ' + s.w[i] + ' walls'; }); },
     mount: function (l, m) {
       L = l; M = m;
@@ -3433,7 +3443,7 @@ var ChineseG = (function () {
     result: function (s) { var w = E.winner(s); if (w >= 0) return { winner: w, sub: 'All 10 marbles home.' }; if (s.plies >= 1500) return { winner: -1, title: 'Draw — move limit' }; return null; },
     apply: function (s, mv, seat) { var path = mv.path || [mv.from, mv.to]; E.apply(s, mv); s.last = path; return { t: 'hop', path: path, seat: seat }; },
     fxTime: function (fx) { return fx.path ? 240 * (fx.path.length - 1) + 200 : 200; },
-    ai: function (s, seat, lv, m) { return AI.call('chinese', 'think', Object.assign({ state: s, seat: seat }, lv), 500).then(function (r) { if (r.move) m.L.info.textContent = m.seatName(seat) + ' searched ' + (r.depth || 1) + ' moves ahead, ' + fmtTime(r.ms || 0); return r.move; }); },
+    ai: function (s, seat, lv, m) { return AI.call('chinese', 'think', Object.assign({ state: s, seat: seat }, lv), 500).then(function (r) { return r.move; }); },
     scores: function (s) { if (!s) return []; var out = []; for (var i = 0; i < s.n; i++) out.push(E.progress(s, i) + '/10 home'); return out; },
     mount: function (l, m) { L = l; M = m; svg = S('svg', { viewBox: '-262 -312 524 624', class: 'board' }, L.stage); svg.addEventListener('click', onClick); },
     render: render
@@ -3667,7 +3677,7 @@ var GAMES = [
 var nav = document.getElementById('tabs'), mainEl = document.getElementById('main'), matches = {}, panes = {};
 GAMES.forEach(function (g, i) {
   var b = H('button', null, nav, g.name); g.btn = b;
-  b.onclick = function () { Sound.tick(); show(g.id); };
+  b.onclick = function () { show(g.id); };
   panes[g.id] = H('section', { class: 'game', id: 'g-' + g.id }, mainEl);
 });
 function show(id) {
@@ -3686,7 +3696,7 @@ function labels() {
   mbtn.innerHTML = sv + '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>' + sl + '</svg>'; mbtn.classList.toggle('off', !Music.on); mbtn.setAttribute('aria-pressed', Music.on);
   tbtn.innerHTML = sv + '<path d="M4 5h16v11H9l-5 4z"/>' + sl + '</svg>'; tbtn.classList.toggle('off', !Taunts.enabled); tbtn.setAttribute('aria-pressed', Taunts.enabled);
 }
-sbtn.onclick = function () { Sound.toggle(); labels(); Sound.tick(); };
+sbtn.onclick = function () { Sound.toggle(); labels(); if (Sound.on) Sound.move(); };
 mbtn.onclick = function () { Music.toggle(); labels(); };
 tbtn.onclick = function () { Taunts.enabled = !Taunts.enabled; labels(); };
 labels();
