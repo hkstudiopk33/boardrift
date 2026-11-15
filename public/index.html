@@ -7,9 +7,9 @@
 <meta name="application-name" content="Boardrift">
 <meta name="theme-color" content="#0d0f12">
 <meta name="color-scheme" content="dark">
-<!-- When you host this page, replace YOUR-DOMAIN below and uncomment these lines:
-<link rel="canonical" href="https://YOUR-DOMAIN/">
-<meta property="og:url" content="https://YOUR-DOMAIN/">
+<link rel="canonical" href="https://boardrift.khangroup000.workers.dev/">
+<meta property="og:url" content="https://boardrift.khangroup000.workers.dev/">
+<!-- Add an og-image.png and uncomment these when you have one (replace YOUR-DOMAIN):
 <meta property="og:image" content="https://YOUR-DOMAIN/og-image.png">
 <meta name="twitter:image" content="https://YOUR-DOMAIN/og-image.png">
 -->
@@ -2433,13 +2433,21 @@ var Net = (function () {
       if (ws) { try { ws.close(); } catch (e) {} }
       me.name = name; store('name', name); handler = onMsg;
       var url = server() + '/room/' + encodeURIComponent(code) + '?cid=' + me.cid + '&name=' + encodeURIComponent(name) + (host ? '&host=1' : '');
+      // Some networks drop a share of WebSocket handshakes, so a failed connect is retried a few times before giving up.
       return new Promise(function (res, rej) {
-        try { ws = new WebSocket(url); } catch (e) { rej(e); return; }
-        var opened = false;
-        ws.onopen = function () { opened = true; res(); };
-        ws.onerror = function () { if (!opened) rej(new Error('Could not reach the game server')); };
-        ws.onclose = function () { if (handler) handler({ type: 'closed' }); };
-        ws.onmessage = function (e) { var msg; try { msg = JSON.parse(e.data); } catch (x) { return; } if (handler) handler(msg); };
+        var tries = 0;
+        (function attempt() {
+          if (!handler) return;
+          tries++;
+          var sock, opened = false, failed = false;
+          try { sock = new WebSocket(url); } catch (e) { rej(e); return; }
+          ws = sock;
+          function fail() { if (opened || failed) return; failed = true; if (ws !== sock) return; if (tries < 6) setTimeout(attempt, 300 * tries); else rej(new Error('Could not reach the game server')); }
+          sock.onopen = function () { opened = true; res(); };
+          sock.onerror = fail;
+          sock.onclose = function () { if (!opened) { fail(); return; } if (ws === sock && handler) handler({ type: 'closed' }); };
+          sock.onmessage = function (e) { if (ws !== sock) return; var msg; try { msg = JSON.parse(e.data); } catch (x) { return; } if (handler) handler(msg); };
+        })();
       });
     },
     send: function (type, data) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: type, data: data })); },
